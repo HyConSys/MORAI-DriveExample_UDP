@@ -32,7 +32,6 @@ Install packages which basically need
 ```
 $ git clone https://github.com/MORAI-Autonomous/MORAI-DriveExample_UDP.git
 $ cd MORAI-DriveExample_UDP
-$ git submodule update --init --recursive
 $ find -name 'requirements.txt' | xargs -L 1 sudo pip install -U -r
 ```
 
@@ -55,8 +54,6 @@ $ python ./main.py
     > py uninstall --purge 
     > py install 3.8.10
 - In our case it was 3.14.0rc3
-- Navigate to this polder and make sure the submodule (autonomous_driving) is initialized:
-    > git submodule update --init --recursive
 - Start a python venv: 
     > python -m venv .venv
 - Enable script execution in Windows PS: 
