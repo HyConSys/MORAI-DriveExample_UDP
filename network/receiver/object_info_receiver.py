@@ -11,7 +11,7 @@ class ObjectInfoReceiver(Receiver):
         if self.header == raw_data[0:14].decode():
             object_info_list = []
             offset_byte = 38
-            data_size = 68
+            data_size = 106
             for i in range(20):
                 start_byte = i*data_size + offset_byte
                 object_id, object_type = struct.unpack('hh', raw_data[start_byte:start_byte+4])
