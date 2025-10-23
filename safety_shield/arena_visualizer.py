@@ -109,6 +109,12 @@ class ArenaVisualizer(arcade.Window):
         spec_set_size = self.translate_sys_to_arena([spec_set[2], spec_set[3], 0.0])
         arcade.draw_rectangle_filled(spec_set_pos[0], spec_set_pos[1], spec_set_size[0] - self.ZERO_BASE_X, spec_set_size[1] - self.ZERO_BASE_Y, arcade.color.GREEN)
 
+        target_set = dynamic_sets[2]
+        target_set_pos = self.translate_sys_to_arena([target_set[0], target_set[1], 0.0])
+        target_set_size = self.translate_sys_to_arena([target_set[2], target_set[3], 0.0])
+        arcade.draw_rectangle_filled(target_set_pos[0], target_set_pos[1], target_set_size[0] - self.ZERO_BASE_X, target_set_size[1] - self.ZERO_BASE_Y, arcade.color.BLUE)
+        arcade.draw_rectangle_filled(target_set_pos[0], target_set_pos[1], 5, 5, arcade.color.BLACK)    
+
     def start(self):
         arcade.run()
 

@@ -1,5 +1,5 @@
 """
-pfaces_symcontrol_client.py
+client.py
 
 Python port of pFacesSymControlClient (original C++ implementation).
 Based on the uploaded C++ source. :contentReference[oaicite:1]{index=1}

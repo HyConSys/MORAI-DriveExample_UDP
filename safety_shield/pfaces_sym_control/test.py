@@ -1,4 +1,4 @@
-from pfaces_sym_control_client import pFacesSymControlClient
+from .client import pFacesSymControlClient
 
 
 def main():

@@ -1,15 +1,16 @@
 #!/usr/bin/env python
 
+from .arena_visualizer import ArenaVisualizer
+from .pfaces_sym_control.client import pFacesSymControlClient
+from .utils import str2list
+from autonomous_driving.localization.point import Point
+
 import threading
 import time
 import sys
 import math
 import os
 import copy
-from safety_shield.arena_visualizer import ArenaVisualizer
-from safety_shield.pfaces_sym_control_client import pFacesSymControlClient
-from safety_shield.utils import str2list
-from autonomous_driving.localization.point import Point
 
 # insert interace folder of pFaces
 if 'PFACES_SDK_ROOT' in os.environ:
@@ -21,7 +22,7 @@ from ConfigReader import ConfigReader
 class SafetyShield:
     def __init__(self):
         self.client = pFacesSymControlClient("http://127.0.0.1:12345", "pFaces/REST/dictionary/morai_acas")
-        self.config_file = "safety_shield\\vehicle.cfg"
+        self.config_file = "safety_shield\\pfaces_sym_control\\morai_acas.cfg"
         self.config_reader = ConfigReader(self.config_file)
 
         # state space info
@@ -63,13 +64,40 @@ class SafetyShield:
     def __del__(self):
         self.we_are_closing = True
 
+    def get_safe_set(self):
+        safe_set_center_with_dimensions = [self.safe_set_center_x, self.safe_set_center_y, self.safe_set_width, self.safe_set_hight]
+        # safe_Set_lb_with_dimensions = [
+        #     safe_set_center_with_dimensions[0] - safe_set_center_with_dimensions[2]/2.0,
+        #     safe_set_center_with_dimensions[1] - safe_set_center_with_dimensions[3]/2.0,
+        #     safe_set_center_with_dimensions[2],
+        #     safe_set_center_with_dimensions[3]
+        # ]
+        return safe_set_center_with_dimensions
+    
+    def get_target_set(self):
+        target_set_width = 4*self.x_eta[0]
+        target_set_center_with_dimensions = [
+            self.safe_set_center_x + self.safe_set_width/2.0 - target_set_width/2.0,
+            self.safe_set_center_y,
+            target_set_width,
+            self.safe_set_hight
+        ]
+        # target_set_lb_with_dimensions = [
+        #     target_set_center_with_dimensions[0] - target_set_center_with_dimensions[2]/2,
+        #     target_set_center_with_dimensions[1] - target_set_center_with_dimensions[3]/2,  
+        #     target_set_center_with_dimensions[2],
+        #     target_set_center_with_dimensions[3]
+        # ]
+        return target_set_center_with_dimensions
+
     def get_dynamic_sets(self):
         dynamic_objects = []
+
+        # remember: postion is here lower-bound
         with self.dynamic_object_list_lock:
             dynamic_objects=  [[obj.position.x, obj.position.y, obj.length, obj.width]  for obj in self.dynamic_object_list]
         
-        specs_set = [self.safe_set_center_x, self.safe_set_center_y, self.safe_set_width, self.safe_set_hight]
-        return [dynamic_objects, specs_set]
+        return [dynamic_objects, self.get_safe_set(), self.get_target_set()]
 
 
     def visualizer_thread(self):

@@ -88,7 +88,7 @@ class UdpManager:
                 
                 control_input = self.safety_shield.check_safety(local_vehicle_state, local_object_info_list, unschielded_control_input)
 
-                steering_input = -np.rad2deg(control_input.steering)/self.vehicle_max_steering_data
+                steering_input = -np.rad2deg(control_input.steering)/self.vehicle_max_steering_data                
                 self.ctrl_cmd_sender.send_data([control_input.accel, control_input.brake, steering_input])
                 print("Control Data:" , [control_input.accel, control_input.brake, steering_input])
                 
