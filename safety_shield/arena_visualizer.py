@@ -98,19 +98,22 @@ class ArenaVisualizer(arcade.Window):
         # draw dynamic objects (obstacles)
         dynamic_objects = dynamic_sets[0]
         for obj_info in dynamic_objects:
-            obj_pos = self.translate_sys_to_arena([obj_info[0], obj_info[1], 0.0])
+            obj_center = [obj_info[0] + obj_info[2]/2.0, obj_info[1] + obj_info[3]/2.0, 0.0]
+            obj_pos = self.translate_sys_to_arena(obj_center)
             obj_size = self.translate_sys_to_arena([obj_info[2], obj_info[3], 0.0])
             arcade.draw_rectangle_filled(obj_pos[0], obj_pos[1], obj_size[0] - self.ZERO_BASE_X, obj_size[1] - self.ZERO_BASE_Y, arcade.color.RED)
             arcade.draw_rectangle_filled(obj_pos[0], obj_pos[1], 5, 5, arcade.color.BLACK)
 
         # draw specification set (safe/target)
-        spec_set = dynamic_sets[1]
-        spec_set_pos = self.translate_sys_to_arena([spec_set[0], spec_set[1], 0.0])
-        spec_set_size = self.translate_sys_to_arena([spec_set[2], spec_set[3], 0.0])
-        arcade.draw_rectangle_filled(spec_set_pos[0], spec_set_pos[1], spec_set_size[0] - self.ZERO_BASE_X, spec_set_size[1] - self.ZERO_BASE_Y, arcade.color.GREEN)
+        safe_set = dynamic_sets[1]
+        safe_set_center = [safe_set[0] + safe_set[2]/2.0, safe_set[1] + safe_set[3]/2.0, 0.0]
+        safe_set_pos = self.translate_sys_to_arena(safe_set_center)
+        safe_set_size = self.translate_sys_to_arena([safe_set[2], safe_set[3], 0.0])
+        arcade.draw_rectangle_filled(safe_set_pos[0], safe_set_pos[1], safe_set_size[0] - self.ZERO_BASE_X, safe_set_size[1] - self.ZERO_BASE_Y, arcade.color.GREEN)
 
         target_set = dynamic_sets[2]
-        target_set_pos = self.translate_sys_to_arena([target_set[0], target_set[1], 0.0])
+        target_set_center = [target_set[0] + target_set[2]/2.0, target_set[1] + target_set[3]/2.0, 0.0]
+        target_set_pos = self.translate_sys_to_arena(target_set_center)
         target_set_size = self.translate_sys_to_arena([target_set[2], target_set[3], 0.0])
         arcade.draw_rectangle_filled(target_set_pos[0], target_set_pos[1], target_set_size[0] - self.ZERO_BASE_X, target_set_size[1] - self.ZERO_BASE_Y, arcade.color.BLUE)
         arcade.draw_rectangle_filled(target_set_pos[0], target_set_pos[1], 5, 5, arcade.color.BLACK)    

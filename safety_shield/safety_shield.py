@@ -2,7 +2,7 @@
 
 from .arena_visualizer import ArenaVisualizer
 from .pfaces_sym_control.client import pFacesSymControlClient
-from .utils import str2list
+from .utils import str2list, list2str
 from autonomous_driving.localization.point import Point
 
 import threading
@@ -11,6 +11,7 @@ import sys
 import math
 import os
 import copy
+from numpy import linalg
 
 # insert interace folder of pFaces
 if 'PFACES_SDK_ROOT' in os.environ:
@@ -64,16 +65,18 @@ class SafetyShield:
     def __del__(self):
         self.we_are_closing = True
 
+    # safe set provided as lower-bound + dimensions
     def get_safe_set(self):
         safe_set_center_with_dimensions = [self.safe_set_center_x, self.safe_set_center_y, self.safe_set_width, self.safe_set_hight]
-        # safe_Set_lb_with_dimensions = [
-        #     safe_set_center_with_dimensions[0] - safe_set_center_with_dimensions[2]/2.0,
-        #     safe_set_center_with_dimensions[1] - safe_set_center_with_dimensions[3]/2.0,
-        #     safe_set_center_with_dimensions[2],
-        #     safe_set_center_with_dimensions[3]
-        # ]
-        return safe_set_center_with_dimensions
+        safe_Set_lb_with_dimensions = [
+            safe_set_center_with_dimensions[0] - safe_set_center_with_dimensions[2]/2.0,
+            safe_set_center_with_dimensions[1] - safe_set_center_with_dimensions[3]/2.0,
+            safe_set_center_with_dimensions[2],
+            safe_set_center_with_dimensions[3]
+        ]
+        return safe_Set_lb_with_dimensions
     
+    # target set provided as lower-bound + dimensions
     def get_target_set(self):
         target_set_width = 4*self.x_eta[0]
         target_set_center_with_dimensions = [
@@ -82,26 +85,29 @@ class SafetyShield:
             target_set_width,
             self.safe_set_hight
         ]
-        # target_set_lb_with_dimensions = [
-        #     target_set_center_with_dimensions[0] - target_set_center_with_dimensions[2]/2,
-        #     target_set_center_with_dimensions[1] - target_set_center_with_dimensions[3]/2,  
-        #     target_set_center_with_dimensions[2],
-        #     target_set_center_with_dimensions[3]
-        # ]
-        return target_set_center_with_dimensions
+        target_set_lb_with_dimensions = [
+            target_set_center_with_dimensions[0] - target_set_center_with_dimensions[2]/2,
+            target_set_center_with_dimensions[1] - target_set_center_with_dimensions[3]/2,  
+            target_set_center_with_dimensions[2],
+            target_set_center_with_dimensions[3]
+        ]
+        return target_set_lb_with_dimensions
 
-    def get_dynamic_sets(self):
+    # all control sets provided as lower-bound + dimensions
+    def get_control_sets(self):
         dynamic_objects = []
-
-        # remember: postion is here lower-bound
         with self.dynamic_object_list_lock:
-            dynamic_objects=  [[obj.position.x, obj.position.y, obj.length, obj.width]  for obj in self.dynamic_object_list]
+            dynamic_objects=  [
+                [obj.position.x - obj.length/2.0,
+                 obj.position.y - obj.width/2.0,
+                 obj.length, 
+                 obj.width]  for obj in self.dynamic_object_list]
         
         return [dynamic_objects, self.get_safe_set(), self.get_target_set()]
 
 
     def visualizer_thread(self):
-        self.arena_visualizer = ArenaVisualizer([self.car_pos_x_in_arena, self.car_pos_y_in_arena, self.car_orientation_in_arena], self.config_reader, self.get_dynamic_sets)
+        self.arena_visualizer = ArenaVisualizer([self.car_pos_x_in_arena, self.car_pos_y_in_arena, self.car_orientation_in_arena], self.config_reader, self.get_control_sets)
         self.arena_visualizer.start()
         
         # sleep till closing signal is received
@@ -128,6 +134,24 @@ class SafetyShield:
         point_in_target_frame_x = (+math.cos(target_frame_angle)*standard_minus_base_x) + (+math.sin(target_frame_angle)*standard_minus_base_y)
         point_in_target_frame_y = (-math.sin(target_frame_angle)*standard_minus_base_x) + (+math.cos(target_frame_angle)*standard_minus_base_y)
         return [point_in_target_frame_x, point_in_target_frame_y]
+    
+
+    # Decides which pFaces-SymControl action to promote as the final control input to be sent to the vehicle
+    def promote_best_action(self, pfaces_sym_control_actions, unschielded_control_input):
+        
+        best_action = unschielded_control_input
+        min_distance = float('inf')
+        
+        for action in pfaces_sym_control_actions:
+            distance = linalg.norm([
+                action[0] - unschielded_control_input.accel, 
+                action[1] - unschielded_control_input.steering
+            ])
+            if distance < min_distance:
+                min_distance = distance
+                best_action = action
+    
+        return best_action
         
 
     def check_safety(self, vehicle_state, object_list, unschielded_control_input):
@@ -215,16 +239,27 @@ class SafetyShield:
                 can_expand_x = False
             if (self.safe_set_center_y - half_width) < 0.0 or (self.safe_set_center_y + half_width) > self.arena_height:
                 can_expand_y = False
-
-
             
-            # convert the position of each object to be its Lower-Bound not its center? or do it later befroe sending to pFaces?
+        # Collect and prepare obstacles and target sets for pFaces-SymControl
+        [obstacles, _, target_set] = self.get_control_sets()
+        obstacles_as_intervals = [[obstable[0], obstable[0] + obstable[2], obstable[1],  obstable[1] + obstable[3], -3.14, 3.14] for obstable in obstacles]
+        obstacles_data = [list2str(obst_interval) for obst_interval in obstacles_as_intervals]
+        target_set_as_interval = [target_set[0], target_set[0] + target_set[2], target_set[1], target_set[1] + target_set[3], -3.14, 3.14]
+        target_date = list2str(target_set_as_interval)
         
-        
-        # - call pFaces-SymControl client and send the synthesis request:
-        #       client.send_synthesis_request(["(0,1)","(2,3)"], "(1,2)", False)
-        # - call pFaces-SymControl client and get the control actions:
-        #       actions = client.get_control_actions([0.1, 1.0, 2.0], False)
-        # - parse the actions and modify the unschielded_control_input if necessary
+        # Call pFaces-SymControl client and send the synthesis request:
+        is_last_synth_request = False
+        self.client.send_synthesis_request(obstacles_data, target_date, is_last_synth_request)
 
-        return unschielded_control_input
+        # Call pFaces-SymControl client and get the control actions.
+        # From pFaces prespective, the world is changin around the vehicle, therefore the current state is always fixed.
+        current_state = [
+            self.car_pos_x_in_arena,        # x is fixed in its frame
+            self.car_pos_y_in_arena,        # y is fixed in its frame
+            0.0                             # angle is fixed in its frame
+        ]
+        is_last_control_request = True
+        actions = self.client.get_control_actions(current_state, is_last_control_request)
+        
+        # Pick best action to promote
+        return self.promote_best_action(actions, unschielded_control_input)
