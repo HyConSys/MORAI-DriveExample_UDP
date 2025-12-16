@@ -60,4 +60,4 @@ class AutonomousDriving:
         self.pure_pursuit.vehicle_state = vehicle_state
         steering_cmd = self.pure_pursuit.calculate_steering_angle()
 
-        return ControlInput(acc_cmd, steering_cmd), local_path
+        return [acc_cmd, steering_cmd], local_path

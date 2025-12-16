@@ -3,6 +3,7 @@
 from .arena_visualizer import ArenaVisualizer
 from .pfaces_sym_control.client import pFacesSymControlClient
 from .utils import str2list, list2str
+from autonomous_driving.config.config import Config
 from autonomous_driving.localization.point import Point
 
 import threading
@@ -22,14 +23,23 @@ from ConfigReader import ConfigReader
 
 class SafetyShield:
     def __init__(self):
-        self.client = pFacesSymControlClient("http://127.0.0.1:12345", "pFaces/REST/dictionary/morai_acas")
-        self.config_file = "safety_shield\\pfaces_sym_control\\morai_acas.cfg"
-        self.config_reader = ConfigReader(self.config_file)
+
+        # Load configs
+        self.config = Config()
+        self.config.update_config(os.path.join(os.path.dirname(__file__), 'config.json'))
+        self.pfaces_config_file = self.config['safety_shield']['pfaces_config']
+        self.pfaces_config_reader = ConfigReader(os.path.join(os.path.dirname(__file__), self.pfaces_config_file))
+
+        # intialize control clinet 
+        self.pfaces_clinet_pull_interval = 0.001
+        self.pfaces_server_url =  self.config['safety_shield']['pfaces_server_url']
+        self.acas_server_path = self.config['safety_shield']['acas_server_path'] 
+        self.client = pFacesSymControlClient(self.pfaces_server_url, self.acas_server_path, self.pfaces_clinet_pull_interval)
 
         # state space info
-        self.x_lb = str2list(self.config_reader.get_value_string("states.lb"))
-        self.x_ub = str2list(self.config_reader.get_value_string("states.ub"))
-        self.x_eta = str2list(self.config_reader.get_value_string("states.eta"))
+        self.x_lb = str2list(self.pfaces_config_reader.get_value_string("states.lb"))
+        self.x_ub = str2list(self.pfaces_config_reader.get_value_string("states.ub"))
+        self.x_eta = str2list(self.pfaces_config_reader.get_value_string("states.eta"))
 
         # arena information
         self.arena_width = self.x_ub[0] - self.x_lb[0]
@@ -37,20 +47,23 @@ class SafetyShield:
 
         # car's position in pfaces grid (concrete value in meters, relative to state space (AKA arena) base [0,0,0])
         # this shal also serve as intitial position (which becomes intial state if velocity included)
-        self.car_pos_x_in_arena = 10.0
-        self.car_pos_y_in_arena = 5.0
+        self.car_pos_x_in_arena = self.x_ub[0] - 30.0 # 30-meters before the end of arena
+        self.car_pos_y_in_arena = self.x_lb[1] + (self.x_ub[1] - self.x_lb[1])/2.0  # always in the middle of the arena
         self.car_orientation_in_arena = 0.0
 
         # car dimenstions
-        # TODO: get the values for the car from the config or udp_manager
-        self.car_length = 4.95  # in meters
-        self.car_width = 1.96   # in meters
+        self.car_length = self.config['common']['vehicle_length']
+        self.car_width = self.config['common']['vehicle_width']
 
         # safe set
         self.safe_set_center_x = self.car_pos_x_in_arena
         self.safe_set_center_y = self.car_pos_y_in_arena
         self.safe_set_width = self.x_eta[0]
         self.safe_set_hight = self.x_eta[1]
+
+        # target velocity (alaways aim at as stop speed as we are chasing a moving target)
+        self.target_velocity_lb = -5.0
+        self.target_velocity_ub = 1.5 
         
 
         # start the visualizer in a new thread
@@ -78,12 +91,13 @@ class SafetyShield:
     
     # target set provided as lower-bound + dimensions
     def get_target_set(self):
-        target_set_width = 4*self.x_eta[0]
+        target_set_width = 5*self.x_eta[0]
+        target_set_higth = 10*self.x_eta[1]
         target_set_center_with_dimensions = [
-            self.safe_set_center_x + self.safe_set_width/2.0 - target_set_width/2.0,
+            self.safe_set_center_x + self.safe_set_width/2.0 - 0.7*target_set_width,
             self.safe_set_center_y,
             target_set_width,
-            self.safe_set_hight
+            target_set_higth
         ]
         target_set_lb_with_dimensions = [
             target_set_center_with_dimensions[0] - target_set_center_with_dimensions[2]/2,
@@ -107,7 +121,7 @@ class SafetyShield:
 
 
     def visualizer_thread(self):
-        self.arena_visualizer = ArenaVisualizer([self.car_pos_x_in_arena, self.car_pos_y_in_arena, self.car_orientation_in_arena], self.config_reader, self.get_control_sets)
+        self.arena_visualizer = ArenaVisualizer([self.car_pos_x_in_arena, self.car_pos_y_in_arena, 0.0, self.car_orientation_in_arena], self.pfaces_config_reader, self.get_control_sets)
         self.arena_visualizer.start()
         
         # sleep till closing signal is received
@@ -138,14 +152,18 @@ class SafetyShield:
 
     # Decides which pFaces-SymControl action to promote as the final control input to be sent to the vehicle
     def promote_best_action(self, pfaces_sym_control_actions, unschielded_control_input):
+
+        # is action intended for break? then allow it
+        if unschielded_control_input[0] < 0:
+            return unschielded_control_input
         
         best_action = unschielded_control_input
         min_distance = float('inf')
         
         for action in pfaces_sym_control_actions:
             distance = linalg.norm([
-                action[0] - unschielded_control_input.accel, 
-                action[1] - unschielded_control_input.steering
+                action[0] - unschielded_control_input[0], 
+                action[1] - unschielded_control_input[1]
             ])
             if distance < min_distance:
                 min_distance = distance
@@ -155,6 +173,9 @@ class SafetyShield:
         
 
     def check_safety(self, vehicle_state, object_list, unschielded_control_input):
+
+        # start a timer to measure the time needed by the schield
+        start_time = time.perf_counter()
 
         # We define a target frame for the vehicle's moving arena that will be provided to pFaces. The base point of the frame is
         # the vehicle's position. The orinetation of the frame is the yaw of the vehicle.
@@ -185,6 +206,11 @@ class SafetyShield:
                 obj.length += self.car_length
                 obj.width += self.car_width
 
+                # more hight for pedestrians
+                if obj.type == 0:
+                    obj.width += 5
+
+
             # remove any objects that are outside of the arena
             self.dynamic_object_list = [obj for obj in self.dynamic_object_list if 
                                         ((obj.position.x + obj.length/2.0) >= 0.0 and (obj.position.x - obj.length/2.0) <= self.arena_width and 
@@ -201,16 +227,17 @@ class SafetyShield:
         new_width = self.safe_set_hight
         while can_expand_x or can_expand_y:
 
-            if can_expand_x:
-                new_length = self.safe_set_width + 2*self.x_eta[0]
-                new_width = self.safe_set_hight
-                new_center_x = self.safe_set_center_x + self.x_eta[0] # to keep the car at the left side of the safe set
-                expanding_direction = 'x'
-            else:
+            # expand y first to consume all possible road width
+            if can_expand_y:
                 new_width = self.safe_set_hight + 2*self.x_eta[1]
                 new_length = self.safe_set_width
                 new_center_x = self.safe_set_center_x
                 expanding_direction = 'y'
+            else:
+                new_length = self.safe_set_width + 2*self.x_eta[0]
+                new_width = self.safe_set_hight
+                new_center_x = self.safe_set_center_x + self.x_eta[0] # to keep the car at the left side of the safe set
+                expanding_direction = 'x'
 
             half_length = new_length / 2.0
             half_width = new_width / 2.0
@@ -234,6 +261,11 @@ class SafetyShield:
                 self.safe_set_hight = new_width  
                 self.safe_set_center_x = new_center_x
 
+            # max expansion of y is the width of 1.0*vehicle to give flexibility of extending the target set
+            if self.safe_set_hight >= 1.0*self.car_width:
+                can_expand_y = False
+
+
             # check arena bounds
             if (self.safe_set_center_x - half_length) < 0.0 or (self.safe_set_center_x + half_length) > self.arena_width:
                 can_expand_x = False
@@ -242,9 +274,17 @@ class SafetyShield:
             
         # Collect and prepare obstacles and target sets for pFaces-SymControl
         [obstacles, _, target_set] = self.get_control_sets()
-        obstacles_as_intervals = [[obstable[0], obstable[0] + obstable[2], obstable[1],  obstable[1] + obstable[3], -3.14, 3.14] for obstable in obstacles]
+        obstacles_as_intervals = [[
+            obstable[0], obstable[0] + obstable[2], 
+            obstable[1],  obstable[1] + obstable[3],
+            self.x_lb[2] - self.x_eta[2], self.x_ub[2] + self.x_eta[2], 
+            self.x_lb[3] - self.x_eta[3], self.x_ub[3] + self.x_eta[3]] for obstable in obstacles]
         obstacles_data = [list2str(obst_interval) for obst_interval in obstacles_as_intervals]
-        target_set_as_interval = [target_set[0], target_set[0] + target_set[2], target_set[1], target_set[1] + target_set[3], -3.14, 3.14]
+        target_set_as_interval = [
+            target_set[0], target_set[0] + target_set[2], 
+            target_set[1], target_set[1] + target_set[3], 
+            self.target_velocity_lb, self.target_velocity_ub,
+            self.x_lb[3] - self.x_eta[3], self.x_ub[3] + self.x_eta[3]]
         target_date = list2str(target_set_as_interval)
         
         # Call pFaces-SymControl client and send the synthesis request:
@@ -256,10 +296,17 @@ class SafetyShield:
         current_state = [
             self.car_pos_x_in_arena,        # x is fixed in its frame
             self.car_pos_y_in_arena,        # y is fixed in its frame
+            vehicle_state.velocity,         # velocity from the vehicle state
             0.0                             # angle is fixed in its frame
         ]
         is_last_control_request = True
         actions = self.client.get_control_actions(current_state, is_last_control_request)
         
         # Pick best action to promote
-        return self.promote_best_action(actions, unschielded_control_input)
+        schielded_action = self.promote_best_action(actions, unschielded_control_input)
+
+        # Finish measuting the time
+        end_time = time.perf_counter()
+        elapsed_time = end_time - start_time 
+
+        return [elapsed_time, schielded_action]

@@ -1,0 +1,7 @@
+{
+    "safety_shield": {
+        "pfaces_config": "pfaces_sym_control\\vehicle.cfg",
+        "pfaces_server_url": "http://192.168.1.200:12345",
+        "acas_server_path": "pFaces/REST/dictionary/morai_acas"
+    }
+}

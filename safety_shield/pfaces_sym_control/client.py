@@ -14,6 +14,7 @@ ONLINE_MODE_DICT_KEY_mode = "mode"  # modes: busy, collect_synth, distribute_con
 ONLINE_MODE_DICT_KEY_is_synth_requested = "is_synth_requested"
 ONLINE_MODE_DICT_KEY_obst_set = "obst_set"
 ONLINE_MODE_DICT_KEY_target_set = "target_set"
+ONLINE_MODE_DICT_KEY_is_explore_controls_requested = "is_explore_controls_requested"
 ONLINE_MODE_DICT_KEY_is_last_synth_request = "is_last_synth_request"
 ONLINE_MODE_DICT_KEY_is_control_requested = "is_control_requested"
 ONLINE_MODE_DICT_KEY_current_state = "current_state"
@@ -21,6 +22,7 @@ ONLINE_MODE_DICT_KEY_is_last_control_request = "is_last_control_request"
 ONLINE_MODE_DICT_KEY_is_control_ready = "is_control_ready"
 ONLINE_MODE_DICT_KEY_is_control_recieved = "is_control_recieved"
 ONLINE_MODE_DICT_KEY_actions_list = "actions_list"
+ONLINE_MODE_DICT_KEY_server_accept_explore_controls_requests = "server_accept_explore_controls_requests"
 ONLINE_MODE_TRUE_STRING = "true"
 ONLINE_MODE_FALSE_STRING = "false"
 
@@ -77,7 +79,7 @@ class pFacesSymControlClient:
       actions = client.get_control_actions([0.1, 2.3], is_last_control_request=False)
     """
 
-    def __init__(self, base_uri: str, token: str, poll_interval: float = 0.1):
+    def __init__(self, base_uri: str, token: str, poll_interval: float = 0.001):
         """
         :param base_uri: base URL of the pFaces server, e.g. "http://localhost:5000"
         :param token: path or token appended to base_uri used by the C++ client (client.request(method, token))
@@ -137,6 +139,9 @@ class pFacesSymControlClient:
             ret[i] = response[key]
         return ret
 
+    def is_control_exploration_supported(self):
+        return self.pfaces_get_values([ONLINE_MODE_DICT_KEY_server_accept_explore_controls_requests])[0] == ONLINE_MODE_TRUE_STRING
+
     # ---------------- high-level API ----------------
     def send_synthesis_request(self, obstacles_intervals: List[str], target_interval: str,
                                is_last_synth_request: bool):
@@ -165,7 +170,7 @@ class pFacesSymControlClient:
         self.pfaces_put_values(keyvals)
         #print("sendSynthesisRequest:: Done.")
 
-    def get_control_actions(self, current_state: List[float], is_last_control_request: bool) -> List[List[float]]:
+    def get_control_actions(self, current_state: List[float], is_last_control_request: bool, explore_control_graph: bool = False, extra_obstacles: List[str] = [], extra_target: str = "") -> List[List[float]]:
         """
         Mirrors C++ getControlActions:
           - format current_state as "(a,b,c)"
@@ -177,6 +182,30 @@ class pFacesSymControlClient:
         """
         # format state as "(1.0,2.0,3.0)"
         state = "(" + ",".join(str(x) for x in current_state) + ")"
+
+        if explore_control_graph:
+            if not self.is_control_exploration_supported():
+                print("Server is not accepting control graph exploration requests !")
+                return {}
+            
+            # wait until server mode becomes explore_controls
+            while True:
+                mode = self.pfaces_get_values([ONLINE_MODE_DICT_KEY_mode])[0]
+                if mode == "explore_controls":
+                    break
+                time.sleep(self.poll_interval)
+
+            # Put the control exploration request
+            keyvals = []
+            keyvals.append((ONLINE_MODE_DICT_KEY_current_state, state))
+            keyvals.append((ONLINE_MODE_DICT_KEY_is_explore_controls_requested, ONLINE_MODE_TRUE_STRING))
+            keyvals.append((ONLINE_MODE_DICT_KEY_target_set, extra_target))
+            obsts = ""
+            if len(extra_obstacles) > 1:
+                obsts = "|".join(extra_obstacles)
+            keyvals.append((ONLINE_MODE_DICT_KEY_obst_set, obsts))
+            self.pfaces_put_values(keyvals)
+
 
         # wait until server mode becomes distribute_control
         while True:

@@ -27,7 +27,7 @@ class ArenaVisualizer(arcade.Window):
         x_0_arena = self.translate_sys_to_arena(self.x_0)
         self.system.center_x = x_0_arena[0]
         self.system.center_y = x_0_arena[1]
-        self.system.angle = self.x_0[2]*180.0/math.pi
+        self.system.angle = self.x_0[3]*180.0/math.pi
 
         # prepare for simulation
         self.sys_state = self.x_0

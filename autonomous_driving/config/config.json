@@ -2,6 +2,7 @@
     "common": {
         "sampling_rate": 30,
         "vehicle_length": 4.953,
+        "vehicle_width": 1.96,
         "wheelbase": 2.984
     },
     "map": {

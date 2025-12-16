@@ -2,6 +2,7 @@ import numpy as np
 from autonomous_driving.vehicle_state import VehicleState
 from autonomous_driving.perception.object_info import ObjectInfo
 from autonomous_driving.config.config import Config
+from autonomous_driving.control.control_input import ControlInput
 from .sender import CtrlCmdSender, TrafficLightSender
 from .receiver import EgoInfoReceiver, ObjectInfoReceiver, TrafficLightReceiver
 import os
@@ -38,6 +39,14 @@ class UdpManager:
         
         self.vehicle_max_steering_data = 36.25
 
+        # Safey shield
+        self.unschielded_control_input = []
+        self.shielded_control_input = []
+        self.control_input = []
+        self.shiled_response_time = 0.0
+
+        self.avg_actuatuion_time = 0.0
+
     def execute(self):
         print('start simulation')
         self._set_protocol()
@@ -63,8 +72,8 @@ class UdpManager:
     def _main_loop(self):
 
         while True:
-            start_time = time.perf_counter()
-            compen_time = 0
+            control_loop_start_time = time.perf_counter()
+            control_loop_time = 0
 
             # collect needed data
             local_vehicle_state = []
@@ -82,24 +91,31 @@ class UdpManager:
                 local_traffic_light = copy.deepcopy(self.traffic_light)
 
 
-            if local_vehicle_state:
-                
-                unschielded_control_input, _ = self.autonomous_driving.execute(local_vehicle_state, local_object_info_list, local_traffic_light)
-                
-                control_input = self.safety_shield.check_safety(local_vehicle_state, local_object_info_list, unschielded_control_input)
+            if not local_vehicle_state:
+                continue
 
-                steering_input = -np.rad2deg(control_input.steering)/self.vehicle_max_steering_data                
-                self.ctrl_cmd_sender.send_data([control_input.accel, control_input.brake, steering_input])
-                print("Control Data:" , [control_input.accel, control_input.brake, steering_input])
-                
-                end_time = time.perf_counter()
-                self._print_info(control_input)
-                compen_time = float((end_time - start_time))
-                
-            if((1/30 - compen_time) > 0):
-                time.sleep(1/30 - compen_time)
+            # Calculate control input and shield it    
+            self.unschielded_control_input, _ = self.autonomous_driving.execute(local_vehicle_state, local_object_info_list, local_traffic_light)
+            [self.shiled_response_time, self.shielded_control_input] = self.safety_shield.check_safety(local_vehicle_state, local_object_info_list, self.unschielded_control_input)
+            self.control_input = ControlInput(self.shielded_control_input[0], self.shielded_control_input[1])
+            
+            # calculate loop-time and wait if we finshed earlier than the sampling time
+            # control_loop_end_time = time.perf_counter()
+            self._print_info()
+            # control_loop_time = float((control_loop_end_time - control_loop_start_time))                
+            # control_loop_time += self.avg_actuatuion_time
+            # if((self.sampling_time - control_loop_time) > 0):
+            #     time.sleep(self.sampling_time - control_loop_time)
 
-    def _print_info(self, control_input):
+            # send the control input to the simulator
+            actuation_start_time = time.perf_counter()
+            steering_input = -np.rad2deg(self.control_input.steering)/self.vehicle_max_steering_data
+            self.ctrl_cmd_sender.send_data([self.control_input.accel, self.control_input.brake, steering_input])
+            actuation_end_time = time.perf_counter()
+            actuation_time = actuation_end_time - actuation_start_time
+            self.avg_actuatuion_time = (self.avg_actuatuion_time + actuation_time)/2
+
+    def _print_info(self):
         os.system('cls')
         print('--------------------status-------------------------')
         with self.vehicle_state_lock:
@@ -108,9 +124,9 @@ class UdpManager:
             print(f'heading: {np.rad2deg(self.vehicle_state.yaw):.4f} deg')
 
         print('--------------------controller-------------------------')
-        print(f'accel: {control_input.accel:.4f}')
-        print(f'brake: {control_input.brake:.4f}')
-        print(f'steering_angle: {-np.rad2deg(control_input.steering):.4f} deg')
+        print(f'accel: {self.control_input.accel:.4f}')
+        print(f'brake: {self.control_input.brake:.4f}')
+        print(f'steering_angle: {-np.rad2deg(self.control_input.steering):.4f} deg')
 
         with self.object_info_list_lock:
             if self.object_info_list:
@@ -127,6 +143,11 @@ class UdpManager:
                 print('--------------------traffic light-------------------------')
                 print(f'traffic index: {self.traffic_light[0]}')
                 print(f'traffic status: {self.traffic_light[1]}')
+        
+        print('--------------------safety shield-------------------------')
+        print(f'response time: {self.shiled_response_time} sec.')
+        print(f'unshielded control (accel/steer): [{self.unschielded_control_input}] sec.')
+        print(f'  shielded control (accel/steer): [{self.shielded_control_input}] sec.')
 
     def _ego_info_callback(self, data):
         with self.vehicle_state_lock:
